@@ -46,6 +46,7 @@ const game = {
   nearMiss: 0, // best almost-spotted peak this level (suspicion 40-99, escaped)
   nearMissPeak: 0, // running peak of the current close call
   nearMissUntil: 0, // game.time until the near-miss readout stays up
+  nearMissSuppressed: false, // an alert fired during this close call: it is not a near miss
   alarm: { stage: "CALM", worst: 0 }, // refreshed every frame in update()
 };
 
@@ -68,6 +69,13 @@ function alarmStage(game) {
 function onGuardSpotted(guard) {
   game.everAlerted = true;
   game.everAlertedAnyLevel = true;
+  // An alert is not a near miss: drop any pre-alert peak, so the drain
+  // after the alert can never report it as "NEAR MISS".
+  game.nearMissPeak = 0;
+  // The peak alone is not enough: as the alerted meter drains back
+  // through 40-99 the recorder below would re-fill the peak and settle
+  // it anyway. Suppress recording until the meter has fully drained.
+  game.nearMissSuppressed = true;
   sounds.alert();
   game.message = `${guard.name} spotted you!`;
   setTimeout(() => {
@@ -79,6 +87,13 @@ function onGuardSpotted(guard) {
 function onCameraSpotted(camera) {
   game.everAlerted = true;
   game.everAlertedAnyLevel = true;
+  // An alert is not a near miss: drop any pre-alert peak, so the drain
+  // after the alert can never report it as "NEAR MISS".
+  game.nearMissPeak = 0;
+  // The peak alone is not enough: as the alerted meter drains back
+  // through 40-99 the recorder below would re-fill the peak and settle
+  // it anyway. Suppress recording until the meter has fully drained.
+  game.nearMissSuppressed = true;
   sounds.alert();
   game.message = `Camera ${camera.name} spotted you!`;
   for (const guard of game.guards) {
@@ -109,6 +124,7 @@ function setupLevel(index) {
   game.nearMiss = 0;
   game.nearMissPeak = 0;
   game.nearMissUntil = 0;
+  game.nearMissSuppressed = false;
   game.levelTime = 0;
   game.lastLevelBonus = 0;
   game.caughtBy = "";
@@ -233,13 +249,21 @@ function update(dt) {
     ...game.guards.map((g) => g.suspicion),
     ...game.cameras.map((c) => c.exposure),
   );
-  if (worstNow >= 40 && worstNow < 100) {
+  if (worstNow >= 40 && worstNow < 100 && !game.nearMissSuppressed) {
     game.nearMissPeak = Math.max(game.nearMissPeak, worstNow);
   }
-  if (worstNow < 20 && game.nearMissPeak >= 40) {
-    game.nearMiss = Math.round(game.nearMissPeak);
-    game.nearMissUntil = game.time + 8;
-    game.nearMissPeak = 0;
+  if (worstNow < 20) {
+    if (game.nearMissSuppressed) {
+      // The meter has fully drained after an alert: this close call was
+      // not a near miss. Clear the suppression (a later genuine close
+      // call on this level can still report) without settling a readout.
+      game.nearMissSuppressed = false;
+      game.nearMissPeak = 0;
+    } else if (game.nearMissPeak >= 40) {
+      game.nearMiss = Math.round(game.nearMissPeak);
+      game.nearMissUntil = game.time + 8;
+      game.nearMissPeak = 0;
+    }
   }
   game.alarm = alarmStage(game);
 
